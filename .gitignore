@@ -33,3 +33,6 @@ Desktop.ini
 
 # NuGet / Playwright cache (nếu có trong thư mục project)
 packages/
+
+# Chặn toàn bộ thư mục Data (bao gồm cả ChromeProfiles)
+Data/

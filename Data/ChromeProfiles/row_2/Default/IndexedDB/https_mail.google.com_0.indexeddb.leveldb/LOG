@@ -1,6 +1,0 @@
-2026/04/27-00:39:26.813 427c Reusing MANIFEST E:\Project\Automation\Data\ChromeProfiles\row_2\Default\IndexedDB\https_mail.google.com_0.indexeddb.leveldb/MANIFEST-000001
-2026/04/27-00:39:26.814 427c Recovering log #3
-2026/04/27-00:39:26.825 427c Reusing old log E:\Project\Automation\Data\ChromeProfiles\row_2\Default\IndexedDB\https_mail.google.com_0.indexeddb.leveldb/000003.log 
-2026/04/27-00:39:35.181 bdd8 Level-0 table #5: started
-2026/04/27-00:39:35.197 bdd8 Level-0 table #5: 3202766 bytes OK
-2026/04/27-00:39:35.198 bdd8 Delete type=0 #3

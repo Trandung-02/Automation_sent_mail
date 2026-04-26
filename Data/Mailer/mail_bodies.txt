@@ -1,0 +1,21 @@
+# Nhiều mẫu nội dung: tách bằng một dòng chỉ chứa ba dấu gạch: ---
+# Trong mỗi mẫu có thể dùng: {{name}}  {{email}}  {{company}}
+
+Hi {{name}},
+
+I wanted to reach out regarding {{company}}.
+
+Best regards
+
+---
+
+Hello {{name}},
+
+Just a quick note — I have a question for you (re: your work at {{company}}).
+
+Thanks,
+---
+
+{{name}},
+
+Wishing you a good day. You can reply to this address: {{email}}.

@@ -1,0 +1,5 @@
+# Tên hiển thị trong mục From (cùng địa chỉ Gmail thật).
+# Dòng đầu có nội dung (không tính dòng trống và dòng bắt đầu bằng #) sẽ được dùng.
+# Xóa hoặc để trống = chỉ hiện email người gửi.
+
+Automation Team
