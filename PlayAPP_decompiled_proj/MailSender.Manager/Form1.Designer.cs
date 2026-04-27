@@ -128,6 +128,8 @@ partial class Form1
         txtStartHour = new TextBox();
         lblEnd = new Label();
         txtEndHour = new TextBox();
+        lblSenderThreads = new Label();
+        txtSenderThreads = new TextBox();
         lblSendOnUtc = new Label();
         clbSendOnUtcDays = new CheckedListBox();
         chkDryRun = new CheckBox();
@@ -437,7 +439,7 @@ partial class Form1
 
         txtRecipSearch.Size = new Size(240, 28);
         txtRecipSearch.Margin = new Padding(0, 4, 10, 4);
-        txtRecipSearch.PlaceholderText = "email, tên, công ty...";
+        txtRecipSearch.PlaceholderText = "email, page name...";
         txtRecipSearch.TextChanged += txtRecipSearch_Changed;
 
         StylePrimaryButton(btnRecipRefresh, "Làm mới", clAccent, new Point(0, 0));
@@ -534,7 +536,7 @@ partial class Form1
         grpTplName.Controls.Add(btnTplNameSave);
         grpTplName.Controls.Add(txtTplName);
 
-        grpTplSubjects.Text = "Subjects (mail_subjects.txt)";
+        grpTplSubjects.Text = "Ghi chú";
         grpTplSubjects.Font = new Font("Segoe UI Semibold", 9.5F);
         grpTplSubjects.ForeColor = clText;
         grpTplSubjects.BackColor = clCard;
@@ -553,7 +555,7 @@ partial class Form1
         lblTplSubjectsHint.Size = new Size(200, 32);
         lblTplSubjectsHint.ForeColor = clMuted;
         lblTplSubjectsHint.Font = new Font("Segoe UI", 8.5F);
-        lblTplSubjectsHint.Text = "Mỗi dòng 1 subject (bỏ trống, #).";
+        lblTplSubjectsHint.Text = "Ô này chỉ hiển thị hướng dẫn định dạng.";
 
         btnTplSubjectsSave.Size = new Size(88, 32);
         btnTplSubjectsSave.Anchor = AnchorStyles.Top | AnchorStyles.Right;
@@ -570,7 +572,7 @@ partial class Form1
         grpTplSubjects.Controls.Add(btnTplSubjectsSave);
         grpTplSubjects.Controls.Add(txtTplSubjects);
 
-        grpTplBodies.Text = "Bodies (mail_bodies.txt) — tách bằng dòng ---";
+        grpTplBodies.Text = "Templates CSV (mail_templates.csv)";
         grpTplBodies.Font = new Font("Segoe UI Semibold", 9.5F);
         grpTplBodies.ForeColor = clText;
         grpTplBodies.BackColor = clCard;
@@ -589,7 +591,7 @@ partial class Form1
         lblTplBodiesHint.Size = new Size(600, 20);
         lblTplBodiesHint.ForeColor = clMuted;
         lblTplBodiesHint.Font = new Font("Segoe UI", 8.5F);
-        lblTplBodiesHint.Text = "{{name}} {{email}} {{company}}  |  tách mẫu: ---";
+        lblTplBodiesHint.Text = "Body = rawBody + \\n\\n + rawLine + \\n\\n + rawFooter | Hỗ trợ {{name}} {{email}} {{link_pdf}}";
 
         btnTplBodiesSave.Size = new Size(88, 32);
         btnTplBodiesSave.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
@@ -641,6 +643,13 @@ partial class Form1
         txtEndHour.Location = new Point(300, 28);
         txtEndHour.Size = new Size(60, 24);
 
+        lblSenderThreads.Location = new Point(390, 30);
+        lblSenderThreads.Size = new Size(130, 22);
+        lblSenderThreads.Text = "Luồng người gửi:";
+
+        txtSenderThreads.Location = new Point(520, 28);
+        txtSenderThreads.Size = new Size(60, 24);
+
         lblSendOnUtc.Location = new Point(20, 60);
         lblSendOnUtc.Size = new Size(900, 20);
         lblSendOnUtc.Text = "Ngày gửi (UTC) — tích chọn:";
@@ -673,6 +682,8 @@ partial class Form1
         grpSchedule.Controls.Add(txtStartHour);
         grpSchedule.Controls.Add(lblEnd);
         grpSchedule.Controls.Add(txtEndHour);
+        grpSchedule.Controls.Add(lblSenderThreads);
+        grpSchedule.Controls.Add(txtSenderThreads);
         grpSchedule.Controls.Add(lblSendOnUtc);
         grpSchedule.Controls.Add(clbSendOnUtcDays);
         grpSchedule.Controls.Add(chkDryRun);
@@ -686,7 +697,7 @@ partial class Form1
         tabService.BackColor = clBg;
         tabService.Padding = new Padding(12);
 
-        grpServiceActions.Text = "Windows Service (cần quyền Administrator)";
+        grpServiceActions.Text = "Windows Service (Install/Start/Stop cần quyền Administrator)";
         grpServiceActions.Font = new Font("Segoe UI Semibold", 9.5F);
         grpServiceActions.ForeColor = clText;
         grpServiceActions.BackColor = clCard;
@@ -1035,6 +1046,8 @@ partial class Form1
     private TextBox txtStartHour;
     private Label lblEnd;
     private TextBox txtEndHour;
+    private Label lblSenderThreads;
+    private TextBox txtSenderThreads;
     private Label lblSendOnUtc;
     private CheckedListBox clbSendOnUtcDays;
     private CheckBox chkDryRun;

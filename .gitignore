@@ -35,4 +35,6 @@ Desktop.ini
 packages/
 
 # Chặn toàn bộ thư mục Data (bao gồm cả ChromeProfiles)
-Data/
+Data/MailSender.Manager.exe
+MailSender.Manager.new.exe
+_publish_manager/MailSender.Manager.exe

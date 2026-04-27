@@ -1,7 +1,0 @@
-# Mỗi dòng một tiêu đề. Một email sẽ chọn ngẫu nhiên một dòng.
-# Bỏ qua dòng trống và dòng bắt đầu bằng #
-
-Quick question for you
-Following up on my last message
-Touching base
-A short note for you

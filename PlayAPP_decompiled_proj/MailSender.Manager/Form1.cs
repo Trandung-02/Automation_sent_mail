@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -26,8 +27,7 @@ public partial class Form1 : Form
     private string _senderHealthPath = "";
     private string _senderDailyStatePath = "";
     private string _tplDisplayName = "";
-    private string _tplSubjects = "";
-    private string _tplBodies = "";
+    private string _tplTemplatesCsv = "";
 
     /// <summary>Snapshot recipients gần nhất, dùng cho filter/search.</summary>
     private List<RecipientCsvRow> _recipientCache = [];
@@ -37,6 +37,7 @@ public partial class Form1 : Form
 
     /// <summary>SenderQuota từ appsettings (Min/Max/Warmup) — dùng hiển thị trần quota.</summary>
     private SenderQuotaSnapshot _quotaSnap = new();
+    private bool _isElevated;
 
     public Form1()
     {
@@ -50,12 +51,14 @@ public partial class Form1 : Form
 
     private void Form1_Load(object sender, EventArgs e)
     {
+        _isElevated = IsRunningAsAdministrator();
         ResolvePaths();
         EnsureDataBootstrap();
         InitSendOnUtcList();
         InitRecentActivityGrid();
         InitSendersGrid();
         InitRecipientsGrid();
+        ApplyElevationUiState();
         LoadConfigUi();
         LoadTemplatesIntoUi();
         RefreshAll();
@@ -216,8 +219,7 @@ public partial class Form1 : Form
         _senderHealthPath = Path.Combine(_rootDir, "Data", "Mailer", "sender_health_state.csv");
         _senderDailyStatePath = Path.Combine(_rootDir, "Data", "Mailer", "sender_daily_state.csv");
         _tplDisplayName = Path.Combine(_rootDir, "Data", "Mailer", "sender_display_name.txt");
-        _tplSubjects = Path.Combine(_rootDir, "Data", "Mailer", "mail_subjects.txt");
-        _tplBodies = Path.Combine(_rootDir, "Data", "Mailer", "mail_bodies.txt");
+        _tplTemplatesCsv = Path.Combine(_rootDir, "Data", "Mailer", "mail_templates.csv");
 
         AppendLog("Workspace: " + _rootDir);
         AppendLog("MailSender: " + _mailSenderDir);
@@ -239,7 +241,7 @@ public partial class Form1 : Form
             {
                 File.WriteAllText(
                     _recipientsPath,
-                    "email,name,company,status,last_sent_utc,send_count,next_send_utc,last_error,owner_sender" + Environment.NewLine,
+                    "email,name,status,last_sent_utc,send_count,next_send_utc,last_error,owner_sender" + Environment.NewLine,
                     Encoding.UTF8);
             }
 
@@ -648,8 +650,7 @@ public partial class Form1 : Form
     {
         dgvRecipients.Columns.Clear();
         dgvRecipients.Columns.Add(MakeCol("email", "Email", 220));
-        dgvRecipients.Columns.Add(MakeCol("name", "Tên", 140));
-        dgvRecipients.Columns.Add(MakeCol("company", "Công ty", 140));
+        dgvRecipients.Columns.Add(MakeCol("name", "Page Name", 180));
         dgvRecipients.Columns.Add(MakeCol("status", "Status", 100));
         dgvRecipients.Columns.Add(MakeCol("last_sent_utc", "Last sent (UTC)", 150));
         dgvRecipients.Columns.Add(MakeCol("send_count", "Sent count", 90));
@@ -679,8 +680,7 @@ public partial class Form1 : Form
         {
             rows = rows.Where(r =>
                 (r.Email ?? "").Contains(search, StringComparison.OrdinalIgnoreCase) ||
-                (r.Name ?? "").Contains(search, StringComparison.OrdinalIgnoreCase) ||
-                (r.Company ?? "").Contains(search, StringComparison.OrdinalIgnoreCase));
+                (r.Name ?? "").Contains(search, StringComparison.OrdinalIgnoreCase));
         }
 
         var list = rows.Take(5000).ToList();
@@ -691,7 +691,6 @@ public partial class Form1 : Form
             var idx = dgvRecipients.Rows.Add(
                 r.Email ?? "",
                 r.Name ?? "",
-                r.Company ?? "",
                 r.Status ?? "",
                 r.LastSentUtc?.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) ?? "",
                 r.SendCount.ToString(CultureInfo.InvariantCulture),
@@ -798,8 +797,15 @@ public partial class Form1 : Form
         try
         {
             txtTplName.Text = File.Exists(_tplDisplayName) ? File.ReadAllText(_tplDisplayName, Encoding.UTF8) : "";
-            txtTplSubjects.Text = File.Exists(_tplSubjects) ? File.ReadAllText(_tplSubjects, Encoding.UTF8) : "";
-            txtTplBodies.Text = File.Exists(_tplBodies) ? File.ReadAllText(_tplBodies, Encoding.UTF8) : "";
+            txtTplSubjects.Text =
+                "Định dạng đang dùng: Data/Mailer/mail_templates.csv" + Environment.NewLine +
+                "Header bắt buộc: rawSubject,rawBody,rawLine,rawFooter" + Environment.NewLine +
+                "Body luôn ghép theo thứ tự: rawBody + \\n\\n + rawLine + \\n\\n + rawFooter." + Environment.NewLine +
+                "Hỗ trợ biến: {{name}}, {{email}}, {{link_pdf}}." + Environment.NewLine +
+                "Link PDF lấy ngẫu nhiên từ: Data/Mailer/pdf_links.csv (cột link_pdf).";
+            txtTplSubjects.ReadOnly = true;
+            btnTplSubjectsSave.Enabled = false;
+            txtTplBodies.Text = File.Exists(_tplTemplatesCsv) ? File.ReadAllText(_tplTemplatesCsv, Encoding.UTF8) : "";
         }
         catch (Exception ex)
         {
@@ -814,12 +820,18 @@ public partial class Form1 : Form
 
     private void btnTplSubjectsSave_Click(object? sender, EventArgs e)
     {
-        SaveTemplateFile(_tplSubjects, txtTplSubjects.Text);
+        MessageBox.Show("Phần này chỉ để hướng dẫn. Hãy sửa CSV bên dưới rồi bấm Lưu.");
     }
 
     private void btnTplBodiesSave_Click(object? sender, EventArgs e)
     {
-        SaveTemplateFile(_tplBodies, txtTplBodies.Text);
+        if (!TryValidateTemplatesCsv(txtTplBodies.Text, out var error))
+        {
+            MessageBox.Show(error, "CSV templates chưa hợp lệ");
+            return;
+        }
+
+        SaveTemplateFile(_tplTemplatesCsv, txtTplBodies.Text);
     }
 
     private void SaveTemplateFile(string path, string content)
@@ -836,6 +848,48 @@ public partial class Form1 : Form
             AppendLog("Lỗi lưu " + path + ": " + ex.Message);
             MessageBox.Show("Lỗi: " + ex.Message);
         }
+    }
+
+    private static bool TryValidateTemplatesCsv(string content, out string error)
+    {
+        error = "";
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            error = "File templates CSV đang trống.";
+            return false;
+        }
+
+        var lines = content.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        var nonEmpty = lines.Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
+        if (nonEmpty.Count == 0)
+        {
+            error = "File templates CSV đang trống.";
+            return false;
+        }
+
+        var headerCols = SplitCsv(nonEmpty[0]).Select(x => x.Trim()).ToArray();
+        var expected = new[] { "rawSubject", "rawBody", "rawLine", "rawFooter" };
+        if (headerCols.Length < 4 ||
+            !string.Equals(headerCols[0], expected[0], StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(headerCols[1], expected[1], StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(headerCols[2], expected[2], StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(headerCols[3], expected[3], StringComparison.OrdinalIgnoreCase))
+        {
+            error = "Header phải là: rawSubject,rawBody,rawLine,rawFooter";
+            return false;
+        }
+
+        for (var i = 1; i < nonEmpty.Count; i++)
+        {
+            var cols = SplitCsv(nonEmpty[i]);
+            if (cols.Length < 4)
+            {
+                error = $"Dòng dữ liệu thứ {i + 1} thiếu cột. Mỗi dòng cần đủ 4 cột: rawSubject,rawBody,rawLine,rawFooter.";
+                return false;
+            }
+        }
+
+        return true;
     }
 
     // ===== Schedule (config) =====
@@ -880,6 +934,7 @@ public partial class Form1 : Form
 
             txtStartHour.Text = (schedule?["WorkStartUtcHour"]?.GetValue<int>() ?? 14).ToString();
             txtEndHour.Text = (schedule?["WorkEndUtcHour"]?.GetValue<int>() ?? 23).ToString();
+            txtSenderThreads.Text = (mailer?["SenderThreadCount"]?.GetValue<int>() ?? 1).ToString();
             chkDryRun.Checked = mailer?["DryRun"]?.GetValue<bool>() ?? false;
 
             var selectedDays = new HashSet<int>();
@@ -952,6 +1007,25 @@ public partial class Form1 : Form
                 return;
             }
 
+            if (!int.TryParse(txtSenderThreads.Text.Trim(), out var senderThreads) || senderThreads < 1 || senderThreads > 20)
+            {
+                MessageBox.Show("Số luồng người gửi phải từ 1..20.");
+                return;
+            }
+
+            var senderCount = LoadAppPasswords().Count;
+            if (senderCount <= 0)
+            {
+                MessageBox.Show("Chưa có người gửi trong app_passwords.log. Hãy thêm sender trước khi lưu số luồng.");
+                return;
+            }
+
+            if (senderThreads > senderCount)
+            {
+                MessageBox.Show($"Số luồng người gửi không được vượt quá số sender hiện có ({senderCount}).");
+                return;
+            }
+
             var readPath = GetAppSettingsPathForRead();
             if (!File.Exists(readPath))
             {
@@ -980,6 +1054,7 @@ public partial class Form1 : Form
 
             schedule["WorkStartUtcHour"] = start;
             schedule["WorkEndUtcHour"] = end;
+            mailer["SenderThreadCount"] = senderThreads;
             mailer["DryRun"] = chkDryRun.Checked;
 
             var days = new List<int>();
@@ -1056,6 +1131,11 @@ public partial class Form1 : Form
 
     private void btnStartService_Click(object? sender, EventArgs e)
     {
+        if (!EnsureElevatedForServiceAction())
+        {
+            return;
+        }
+
         try
         {
             if (!ServiceExists())
@@ -1075,6 +1155,11 @@ public partial class Form1 : Form
 
     private void btnStopService_Click(object? sender, EventArgs e)
     {
+        if (!EnsureElevatedForServiceAction())
+        {
+            return;
+        }
+
         try
         {
             RunProcess("sc.exe", $"stop {ServiceName}");
@@ -1089,6 +1174,11 @@ public partial class Form1 : Form
 
     private void btnInstallService_Click(object? sender, EventArgs e)
     {
+        if (!EnsureElevatedForServiceAction())
+        {
+            return;
+        }
+
         try
         {
             UseCursor(Cursors.WaitCursor, () =>
@@ -1106,6 +1196,11 @@ public partial class Form1 : Form
 
     private void btnUninstallService_Click(object? sender, EventArgs e)
     {
+        if (!EnsureElevatedForServiceAction())
+        {
+            return;
+        }
+
         try
         {
             var script = Path.Combine(_mailSenderDir, "scripts", "uninstall-service.ps1");
@@ -1403,13 +1498,12 @@ public partial class Form1 : Form
             {
                 Email = Get(c, 0),
                 Name = Get(c, 1),
-                Company = Get(c, 2),
-                Status = string.IsNullOrWhiteSpace(Get(c, 3)) ? "ready" : Get(c, 3),
-                LastSentUtc = TryParseDateTime(Get(c, 4)),
-                SendCount = int.TryParse(Get(c, 5), out var n) ? n : 0,
-                NextSendUtc = TryParseDate(Get(c, 6)),
-                LastError = Get(c, 7),
-                OwnerSender = Get(c, 8)
+                Status = string.IsNullOrWhiteSpace(Get(c, 2)) ? "ready" : Get(c, 2),
+                LastSentUtc = TryParseDateTime(Get(c, 3)),
+                SendCount = int.TryParse(Get(c, 4), out var n) ? n : 0,
+                NextSendUtc = TryParseDate(Get(c, 5)),
+                LastError = Get(c, 6),
+                OwnerSender = Get(c, 7)
             });
         }
         return list;
@@ -1418,13 +1512,12 @@ public partial class Form1 : Form
     private void SaveRecipients(List<RecipientCsvRow> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("email,name,company,status,last_sent_utc,send_count,next_send_utc,last_error,owner_sender");
+        sb.AppendLine("email,name,status,last_sent_utc,send_count,next_send_utc,last_error,owner_sender");
         foreach (var r in rows)
         {
             sb.AppendLine(JoinCsv(
                 r.Email,
                 r.Name,
-                r.Company,
                 r.Status,
                 r.LastSentUtc?.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) ?? "",
                 r.SendCount.ToString(CultureInfo.InvariantCulture),
@@ -1667,6 +1760,43 @@ public partial class Form1 : Form
         return (p.ExitCode, output, err);
     }
 
+    private void ApplyElevationUiState()
+    {
+        if (_isElevated)
+        {
+            return;
+        }
+
+        btnInstallService.Enabled = false;
+        btnUninstallService.Enabled = false;
+        btnStartService.Enabled = false;
+        btnStopService.Enabled = false;
+        AppendLog("Đang chạy không quyền Administrator: tab Service chỉ ở chế độ xem.");
+    }
+
+    private bool EnsureElevatedForServiceAction()
+    {
+        if (_isElevated)
+        {
+            return true;
+        }
+
+        MessageBox.Show(
+            "Bạn đang mở app ở chế độ thường (không Admin)." + Environment.NewLine +
+            "Để Install/Uninstall/Start/Stop service, hãy chạy app bằng Run as administrator.",
+            "Thiếu quyền Administrator",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Information);
+        return false;
+    }
+
+    private static bool IsRunningAsAdministrator()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        var principal = new WindowsPrincipal(identity);
+        return principal.IsInRole(WindowsBuiltInRole.Administrator);
+    }
+
     private void OpenPath(string path)
     {
         try
@@ -1715,7 +1845,7 @@ public partial class Form1 : Form
             {
                 File.WriteAllText(
                     _recipientsPath,
-                    "email,name,company,status,last_sent_utc,send_count,next_send_utc,last_error,owner_sender" + Environment.NewLine,
+                    "email,name,status,last_sent_utc,send_count,next_send_utc,last_error,owner_sender" + Environment.NewLine,
                     Encoding.UTF8);
             }
         }
@@ -1891,7 +2021,6 @@ public partial class Form1 : Form
     {
         public string Email { get; set; } = "";
         public string Name { get; set; } = "";
-        public string Company { get; set; } = "";
         public string Status { get; set; } = "ready";
         public DateTime? LastSentUtc { get; set; }
         public int SendCount { get; set; }

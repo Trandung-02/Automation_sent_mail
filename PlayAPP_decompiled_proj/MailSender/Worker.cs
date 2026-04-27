@@ -70,6 +70,8 @@ public sealed class Worker(ILogger<Worker> logger) : BackgroundService
                 var ready = recipients
                     .Where(r => r.IsEligible(nowUtc))
                     .Where(r => !suppression.Contains(r.Email.ToLowerInvariant()))
+                    .GroupBy(r => r.Email, StringComparer.OrdinalIgnoreCase)
+                    .Select(g => g.OrderBy(x => x.SendCount).ThenBy(x => x.LastSentUtc ?? DateTime.MinValue).First())
                     .ToList();
 
                 if (ready.Count == 0)
@@ -106,15 +108,19 @@ public sealed class Worker(ILogger<Worker> logger) : BackgroundService
 
                 var quotaLeftBySender = BuildSenderRemainingQuota(recipients, todayTarget, nowUtc.Date);
                 var queue = ready.Take(remainingToday).ToList();
+                var senderThreadCount = Math.Clamp(_options.SenderThreadCount, 1, 20);
+                senderThreadCount = Math.Min(senderThreadCount, activeSenders.Count);
                 logger.LogInformation(
-                    "Sending batch: ready={Ready}, remainingToday={Remain}, senders={Senders}",
+                    "Sending batch: ready={Ready}, remainingToday={Remain}, senders={Senders}, threads={Threads}",
                     ready.Count,
                     remainingToday,
-                    activeSenders.Count);
+                    activeSenders.Count,
+                    senderThreadCount);
 
                 var senderIndex = 0;
-                foreach (var recipient in queue)
+                for (var i = 0; i < queue.Count; i += senderThreadCount)
                 {
+                    var chunk = queue.Skip(i).Take(senderThreadCount).ToList();
                     if (stoppingToken.IsCancellationRequested)
                     {
                         break;
@@ -126,50 +132,68 @@ public sealed class Worker(ILogger<Worker> logger) : BackgroundService
                         break;
                     }
 
-                    var sender = PickSenderRoundRobin(activeSenders, quotaLeftBySender, ref senderIndex);
-                    if (sender is null)
+                    var tasks = new List<Task>();
+                    foreach (var recipient in chunk)
                     {
-                        logger.LogInformation("All sender quotas exhausted for today.");
+                        var sender = PickSenderRoundRobin(activeSenders, quotaLeftBySender, ref senderIndex);
+                        if (sender is null)
+                        {
+                            logger.LogInformation("All sender quotas exhausted for today.");
+                            break;
+                        }
+
+                        var task = Task.Run(async () =>
+                        {
+                            var sendResult = await SendWithRetryAsync(sender, recipient, stoppingToken);
+                            lock (_ioLock)
+                            {
+                                if (sendResult.Ok)
+                                {
+                                    quotaLeftBySender[sender.Email]--;
+                                    recipient.MarkSent(DateTime.UtcNow, sender.Email, _options.RecipientResendGapDays);
+                                    MarkDuplicateRecipientsAsSent(recipients, recipient, sender.Email);
+                                }
+                                else
+                                {
+                                    recipient.MarkFailed(
+                                        DateTime.UtcNow,
+                                        sender.Email,
+                                        _options.RecipientRetryDelayDays,
+                                        sendResult.Error ?? "SMTP send failed");
+                                }
+
+                                if (!sendResult.Ok && sendResult.PauseKind != SenderPauseKind.None)
+                                {
+                                    var until = BuildPauseUntilUtc(sendResult.PauseKind, DateTime.UtcNow);
+                                    SetSenderPause(senderHealthMap, sender.Email, until, sendResult.Error ?? sendResult.PauseKind.ToString());
+                                    SaveSenderHealthMap(senderHealthMap);
+                                    logger.LogWarning(
+                                        "Pause sender {Sender} until {Until} because {Kind}.",
+                                        sender.Email,
+                                        until.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+                                        sendResult.PauseKind);
+                                }
+
+                                SaveRecipients(recipients);
+                                AppendDailyReport(DateTime.UtcNow.Date, sender.Email, recipient.Email, sendResult);
+                            }
+                        }, stoppingToken);
+                        tasks.Add(task);
+                    }
+
+                    if (tasks.Count == 0)
+                    {
                         break;
                     }
 
-                    var sendResult = await SendWithRetryAsync(sender, recipient, stoppingToken);
-                    lock (_ioLock)
+                    await Task.WhenAll(tasks);
+                    if (i + senderThreadCount < queue.Count)
                     {
-                        if (sendResult.Ok)
-                        {
-                            quotaLeftBySender[sender.Email]--;
-                            recipient.MarkSent(DateTime.UtcNow, sender.Email, _options.RecipientResendGapDays);
-                        }
-                        else
-                        {
-                            recipient.MarkFailed(
-                                DateTime.UtcNow,
-                                sender.Email,
-                                _options.RecipientRetryDelayDays,
-                                sendResult.Error ?? "SMTP send failed");
-                        }
-
-                        if (!sendResult.Ok && sendResult.PauseKind != SenderPauseKind.None)
-                        {
-                            var until = BuildPauseUntilUtc(sendResult.PauseKind, DateTime.UtcNow);
-                            SetSenderPause(senderHealthMap, sender.Email, until, sendResult.Error ?? sendResult.PauseKind.ToString());
-                            SaveSenderHealthMap(senderHealthMap);
-                            logger.LogWarning(
-                                "Pause sender {Sender} until {Until} because {Kind}.",
-                                sender.Email,
-                                until.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
-                                sendResult.PauseKind);
-                        }
-
-                        SaveRecipients(recipients);
-                        AppendDailyReport(DateTime.UtcNow.Date, sender.Email, recipient.Email, sendResult);
+                        var jitter = Random.Shared.Next(
+                            _options.Schedule.DelayMinSeconds,
+                            _options.Schedule.DelayMaxSeconds + 1);
+                        await Task.Delay(TimeSpan.FromSeconds(jitter), stoppingToken);
                     }
-
-                    var jitter = Random.Shared.Next(
-                        _options.Schedule.DelayMinSeconds,
-                        _options.Schedule.DelayMaxSeconds + 1);
-                    await Task.Delay(TimeSpan.FromSeconds(jitter), stoppingToken);
                 }
             }
             catch (OperationCanceledException)
@@ -263,10 +287,13 @@ public sealed class Worker(ILogger<Worker> logger) : BackgroundService
         RecipientRow recipient,
         CancellationToken ct)
     {
+        var selectedTemplate = PickRandomTemplate();
+        var selectedPdfLink = PickRandomPdfLink();
+
         if (_options.DryRun)
         {
-            var drySubject = PickRandomSubject();
-            var dryBody = BuildBody(recipient, PickRandomBodyTemplate());
+            var drySubject = BuildSubject(selectedTemplate);
+            var dryBody = BuildBody(recipient, BuildRawBody(selectedTemplate), selectedPdfLink);
             var dryFrom = LoadSenderDisplayName() ?? sender.Email;
             logger.LogInformation(
                 "[DRY-RUN] from={FromName} {Sender} -> {Recipient} | {Subject} | bodyLen={Len}",
@@ -292,8 +319,8 @@ public sealed class Worker(ILogger<Worker> logger) : BackgroundService
             }
 
             message.To.Add(MailboxAddress.Parse(recipient.Email));
-            message.Subject = PickRandomSubject();
-            var bodyText = BuildBody(recipient, PickRandomBodyTemplate());
+            message.Subject = BuildSubject(selectedTemplate);
+            var bodyText = BuildBody(recipient, BuildRawBody(selectedTemplate), selectedPdfLink);
             var builder = new BodyBuilder { TextBody = bodyText };
             message.Body = builder.ToMessageBody();
 
@@ -347,12 +374,12 @@ public sealed class Worker(ILogger<Worker> logger) : BackgroundService
         }
     }
 
-    private string BuildBody(RecipientRow recipient, string? template = null)
+    private string BuildBody(RecipientRow recipient, string? template = null, string? pdfLink = null)
     {
         var body = string.IsNullOrEmpty(template) ? _options.Content.TextTemplate : template;
         body = body.Replace("{{email}}", recipient.Email, StringComparison.OrdinalIgnoreCase);
         body = body.Replace("{{name}}", recipient.Name ?? "", StringComparison.OrdinalIgnoreCase);
-        body = body.Replace("{{company}}", recipient.Company ?? "", StringComparison.OrdinalIgnoreCase);
+        body = body.Replace("{{link_pdf}}", pdfLink ?? "", StringComparison.OrdinalIgnoreCase);
         return body;
     }
 
@@ -381,102 +408,136 @@ public sealed class Worker(ILogger<Worker> logger) : BackgroundService
         return null;
     }
 
-    private string PickRandomSubject()
+    private TemplateCsvRow? PickRandomTemplate()
     {
-        var path = ResolvePath(_options.Paths.SubjectsPoolFile);
+        var path = ResolvePath(_options.Paths.TemplatesCsvFile);
         if (!File.Exists(path))
         {
-            return _options.Content.Subject;
+            return null;
         }
 
-        var list = new List<string>();
-        foreach (var line in File.ReadAllLines(path, Encoding.UTF8))
+        var rows = new List<TemplateCsvRow>();
+        var lines = File.ReadAllLines(path, Encoding.UTF8);
+        for (var i = 1; i < lines.Length; i++)
         {
-            var t = (line ?? "").Trim();
-            if (t.Length == 0 || t.StartsWith("#", StringComparison.Ordinal))
+            var line = lines[i];
+            if (string.IsNullOrWhiteSpace(line))
             {
                 continue;
             }
 
-            list.Add(t);
+            var c = Csv.SplitLine(line);
+            var row = new TemplateCsvRow
+            {
+                RawSubject = GetCsv(c, 0),
+                RawBody = GetCsv(c, 1),
+                RawLine = GetCsv(c, 2),
+                RawFooter = GetCsv(c, 3)
+            };
+
+            if (string.IsNullOrWhiteSpace(row.RawSubject) && string.IsNullOrWhiteSpace(row.RawBody))
+            {
+                continue;
+            }
+
+            rows.Add(row);
         }
 
-        if (list.Count == 0)
+        if (rows.Count == 0)
         {
-            return _options.Content.Subject;
+            return null;
         }
 
-        return list[Random.Shared.Next(list.Count)];
+        return rows[Random.Shared.Next(rows.Count)];
     }
 
-    private string PickRandomBodyTemplate()
+    private string? PickRandomPdfLink()
     {
-        var path = ResolvePath(_options.Paths.BodiesPoolFile);
+        var path = ResolvePath(_options.Paths.PdfLinksCsvFile);
         if (!File.Exists(path))
         {
-            return _options.Content.TextTemplate;
+            return null;
         }
 
-        var text = File.ReadAllText(path, Encoding.UTF8);
-        var blocks = SplitBodyPool(text);
-        if (blocks.Count == 0)
+        var rows = new List<string>();
+        var lines = File.ReadAllLines(path, Encoding.UTF8);
+        for (var i = 1; i < lines.Length; i++)
         {
-            return _options.Content.TextTemplate;
+            var line = lines[i];
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            var c = Csv.SplitLine(line);
+            var link = GetCsv(c, 0).Trim();
+            if (string.IsNullOrWhiteSpace(link))
+            {
+                continue;
+            }
+
+            rows.Add(link);
         }
 
-        return blocks[Random.Shared.Next(blocks.Count)];
+        if (rows.Count == 0)
+        {
+            return null;
+        }
+
+        return rows[Random.Shared.Next(rows.Count)];
     }
 
-    /// <summary>
-    /// Tách mẫu bằng dòng chỉ chứa --- (có thể có khoảng trắng hai bên). Một mẫu = toàn bộ nếu không có tách.
-    /// </summary>
-    private static List<string> SplitBodyPool(string fileContent)
+    private string BuildSubject(TemplateCsvRow? row)
     {
-        if (string.IsNullOrWhiteSpace(fileContent))
+        return string.IsNullOrWhiteSpace(row?.RawSubject) ? _options.Content.Subject : row.RawSubject.Trim();
+    }
+
+    private string BuildRawBody(TemplateCsvRow? row)
+    {
+        if (row is null)
         {
-            return [];
+            return _options.Content.TextTemplate;
         }
 
-        var lines = fileContent.Replace("\r\n", "\n", StringComparison.Ordinal)
-            .Split('\n', StringSplitOptions.None);
-        var blocks = new List<string>();
-        var current = new StringBuilder();
-        foreach (var line in lines)
+        var rawBody = row.RawBody ?? "";
+        var rawLine = row.RawLine ?? "";
+        var rawFooter = row.RawFooter ?? "";
+
+        // Luôn ghép đủ 3 cột theo thứ tự: rawBody -> rawLine -> rawFooter.
+        // Mỗi phần cách nhau đúng 2 lần xuống dòng.
+        if (rawBody.Length == 0 && rawLine.Length == 0 && rawFooter.Length == 0)
         {
-            if (line.Trim() == "---")
-            {
-                if (current.Length > 0)
-                {
-                    var s = current.ToString().Trim();
-                    if (s.Length > 0)
-                    {
-                        blocks.Add(s);
-                    }
-
-                    current.Clear();
-                }
-            }
-            else
-            {
-                if (current.Length > 0)
-                {
-                    current.Append('\n');
-                }
-
-                current.Append(line);
-            }
+            return _options.Content.TextTemplate;
         }
 
-        if (current.Length > 0)
-        {
-            var s = current.ToString().Trim();
-            if (s.Length > 0)
-            {
-                blocks.Add(s);
-            }
-        }
+        return rawBody + "\n\n" + rawLine + "\n\n" + rawFooter;
+    }
 
-        return blocks;
+    private static string GetCsv(string[] c, int idx) => idx < c.Length ? c[idx] : "";
+
+    private static void MarkDuplicateRecipientsAsSent(
+        List<RecipientRow> allRows,
+        RecipientRow sentRecipient,
+        string senderEmail)
+    {
+        foreach (var row in allRows)
+        {
+            if (ReferenceEquals(row, sentRecipient))
+            {
+                continue;
+            }
+
+            if (!string.Equals(row.Email, sentRecipient.Email, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            row.Status = "sent";
+            row.LastSentUtc = sentRecipient.LastSentUtc;
+            row.NextSendUtc = sentRecipient.NextSendUtc;
+            row.OwnerSender = senderEmail;
+            row.LastError = "dedup: already sent for this email";
+        }
     }
 
     private static SenderCredential? PickSenderRoundRobin(
@@ -646,13 +707,12 @@ public sealed class Worker(ILogger<Worker> logger) : BackgroundService
     {
         var path = ResolvePath(_options.Paths.RecipientsMasterCsv);
         var sb = new StringBuilder();
-        sb.AppendLine("email,name,company,status,last_sent_utc,send_count,next_send_utc,last_error,owner_sender");
+        sb.AppendLine("email,name,status,last_sent_utc,send_count,next_send_utc,last_error,owner_sender");
         foreach (var row in rows)
         {
             sb.AppendLine(Csv.JoinLine(
                 row.Email,
                 row.Name ?? "",
-                row.Company ?? "",
                 row.Status,
                 row.LastSentUtc?.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) ?? "",
                 row.SendCount.ToString(CultureInfo.InvariantCulture),
@@ -847,7 +907,7 @@ public sealed class Worker(ILogger<Worker> logger) : BackgroundService
         {
             File.WriteAllText(
                 recipients,
-                "email,name,company,status,last_sent_utc,send_count,next_send_utc,last_error,owner_sender" +
+                "email,name,status,last_sent_utc,send_count,next_send_utc,last_error,owner_sender" +
                 Environment.NewLine,
                 Encoding.UTF8);
         }
@@ -894,32 +954,25 @@ public sealed class Worker(ILogger<Worker> logger) : BackgroundService
                 Encoding.UTF8);
         }
 
-        var subjectsFile = ResolvePath(_options.Paths.SubjectsPoolFile);
-        if (!File.Exists(subjectsFile))
+        var templatesCsvFile = ResolvePath(_options.Paths.TemplatesCsvFile);
+        if (!File.Exists(templatesCsvFile))
         {
             File.WriteAllText(
-                subjectsFile,
-                "# Mỗi dòng một subject, chọn ngẫu nhiên khi gửi\n" +
-                "Quick follow-up on our last chat\n" +
-                "Question about your workflow\n" +
-                "Touching base\n",
+                templatesCsvFile,
+                "rawSubject,rawBody,rawLine,rawFooter\n" +
+                "\"Quick question for you\",\"Hi {{name}},\",\"I wanted to connect regarding your Facebook/Instagram page. Here is the PDF: {{link_pdf}}\",\"Best regards\"\n" +
+                "\"Following up on my last message\",\"Hello {{name}},\",\"Just a short note to reach you at {{email}}. PDF: {{link_pdf}}\",\"Thanks\"\n" +
+                "\"Touching base\",\"{{name}},\",\"Wishing you a good day. You can reply to this address: {{email}}.\",\"Regards\"\n",
                 Encoding.UTF8);
         }
 
-        var bodiesFile = ResolvePath(_options.Paths.BodiesPoolFile);
-        if (!File.Exists(bodiesFile))
+        var pdfLinksCsvFile = ResolvePath(_options.Paths.PdfLinksCsvFile);
+        if (!File.Exists(pdfLinksCsvFile))
         {
             File.WriteAllText(
-                bodiesFile,
-                "# Nhiều mẫu, cách nhau bởi dòng chỉ gồm: ---\n" +
-                "# Hỗ trợ: {{name}} {{email}} {{company}}\n" +
-                "Hi {{name}},\n\n" +
-                "I hope you are well. I wanted to connect regarding {{company}}.\n\n" +
-                "Best,\n" +
-                "---\n" +
-                "Hello {{name}},\n\n" +
-                "Just a short note to reach you at {{email}}.\n\n" +
-                "Regards\n",
+                pdfLinksCsvFile,
+                "link_pdf\n" +
+                "\"https://drive.google.com/file/d/1LH4INCJcco5tLlE7dUKgmXwNMNjci8So/view\"\n",
                 Encoding.UTF8);
         }
     }
@@ -933,16 +986,22 @@ public sealed class Worker(ILogger<Worker> logger) : BackgroundService
 
         var fromCwd = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), value));
         var fromBase = Path.GetFullPath(Path.Combine(_baseDir, value));
+        var fromBaseParent = Path.GetFullPath(Path.Combine(_baseDir, "..", value));
 
         if (File.Exists(fromCwd) || Directory.Exists(fromCwd))
         {
             return fromCwd;
         }
+        if (File.Exists(fromBaseParent) || Directory.Exists(fromBaseParent))
+        {
+            return fromBaseParent;
+        }
         if (File.Exists(fromBase) || Directory.Exists(fromBase))
         {
             return fromBase;
         }
-        return fromCwd;
+        // Windows service thường có CWD là System32; ưu tiên baseParent để trỏ về workspace root.
+        return fromBaseParent;
     }
 
     private static DateTime ParseDate(string? text, DateTime fallback)
@@ -998,11 +1057,18 @@ internal sealed class SenderHealthState
     public string? LastPauseKind { get; set; }
 }
 
+internal sealed class TemplateCsvRow
+{
+    public string RawSubject { get; set; } = "";
+    public string RawBody { get; set; } = "";
+    public string RawLine { get; set; } = "";
+    public string RawFooter { get; set; } = "";
+}
+
 internal sealed class RecipientRow
 {
     public string Email { get; set; } = "";
     public string? Name { get; set; }
-    public string? Company { get; set; }
     public string Status { get; set; } = "ready";
     public DateTime? LastSentUtc { get; set; }
     public int SendCount { get; set; }
@@ -1013,6 +1079,11 @@ internal sealed class RecipientRow
     public bool IsEligible(DateTime nowUtc)
     {
         if (string.IsNullOrWhiteSpace(Email))
+        {
+            return false;
+        }
+        // Quy tắc cứng: mỗi recipient chỉ gửi tối đa 1 lần.
+        if (SendCount >= 1 || Status.Equals("sent", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
@@ -1052,13 +1123,12 @@ internal sealed class RecipientRow
         {
             Email = Get(c, 0),
             Name = Get(c, 1),
-            Company = Get(c, 2),
-            Status = string.IsNullOrWhiteSpace(Get(c, 3)) ? "ready" : Get(c, 3),
-            LastSentUtc = ParseDateTime(Get(c, 4)),
-            SendCount = int.TryParse(Get(c, 5), NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) ? n : 0,
-            NextSendUtc = ParseDate(Get(c, 6)),
-            LastError = Get(c, 7),
-            OwnerSender = Get(c, 8)
+            Status = string.IsNullOrWhiteSpace(Get(c, 2)) ? "ready" : Get(c, 2),
+            LastSentUtc = ParseDateTime(Get(c, 3)),
+            SendCount = int.TryParse(Get(c, 4), NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) ? n : 0,
+            NextSendUtc = ParseDate(Get(c, 5)),
+            LastError = Get(c, 6),
+            OwnerSender = Get(c, 7)
         };
     }
 

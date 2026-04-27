@@ -1,0 +1,4 @@
+rawSubject,rawBody,rawLine,rawFooter
+Quick question for you,"Hi {{name}},",I wanted to reach out regarding your Facebook/Instagram page. Here is the PDF: {{link_pdf}} ,Best regards
+Following up on my last message,"Hello {{name}},",Just a quick note - I have a question about your Facebook/Instagram page. Here is the PDF: {{link_pdf}},"Thanks,"
+A short note for you,"{{name}},",Wishing you a good day. You can reply to this address: {{email}}. Here is the PDF: {{link_pdf}},Regards

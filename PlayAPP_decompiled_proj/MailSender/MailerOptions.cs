@@ -11,6 +11,7 @@ public sealed class MailerOptions
     public MailerContent Content { get; set; } = new();
     public MailerRetry Retry { get; set; } = new();
     public MailerSenderProtection SenderProtection { get; set; } = new();
+    public int SenderThreadCount { get; set; } = 1;
     public int RecipientResendGapDays { get; set; } = 14;
     public int RecipientRetryDelayDays { get; set; } = 1;
     public bool DryRun { get; set; }
@@ -48,14 +49,17 @@ public sealed class MailerPaths
     public string SenderDisplayNameFile { get; set; } = "Data/Mailer/sender_display_name.txt";
 
     /// <summary>
-    /// Mỗi dòng một subject; chọn random. Trống/mất file dùng Content.Subject.
+    /// File CSV mẫu nội dung. Mỗi dòng gồm:
+    /// rawSubject, rawBody, rawLine, rawFooter.
+    /// Chọn ngẫu nhiên 1 dòng khi gửi.
     /// </summary>
-    public string SubjectsPoolFile { get; set; } = "Data/Mailer/mail_subjects.txt";
+    public string TemplatesCsvFile { get; set; } = "Data/Mailer/mail_templates.csv";
 
     /// <summary>
-    /// Nhiều mẫu nội dung, cách nhau bằng dòng chỉ có --- ; chọn random. Hỗ trợ {{name}}, {{email}}, {{company}}.
+    /// File CSV danh sách link PDF. Mỗi dòng: link_pdf.
+    /// Chọn ngẫu nhiên 1 dòng và thay vào {{link_pdf}} trong body.
     /// </summary>
-    public string BodiesPoolFile { get; set; } = "Data/Mailer/mail_bodies.txt";
+    public string PdfLinksCsvFile { get; set; } = "Data/Mailer/pdf_links.csv";
 }
 
 public sealed class MailerSchedule

@@ -19,7 +19,7 @@ Sua trong `appsettings.json` -> `Mailer:Schedule`.
 
 Header:
 
-`email,name,company,status,last_sent_utc,send_count,next_send_utc,last_error,owner_sender`
+`email,name,status,last_sent_utc,send_count,next_send_utc,last_error,owner_sender`
 
 - `status`: `ready|sent|failed|bounced|unsubscribed`
 - `next_send_utc`: `yyyy-MM-dd`
