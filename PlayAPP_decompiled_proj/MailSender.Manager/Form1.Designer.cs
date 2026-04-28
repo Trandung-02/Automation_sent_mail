@@ -134,6 +134,7 @@ partial class Form1
         clbSendOnUtcDays = new CheckedListBox();
         chkDryRun = new CheckBox();
         btnSaveConfig = new Button();
+        btnPreflightSend = new Button();
         lblScheduleHint = new Label();
 
         // ---- Service ----
@@ -360,11 +361,11 @@ partial class Form1
         btnSendersRefresh.Margin = new Padding(0, 0, 6, 4);
         btnSendersRefresh.Click += btnSendersRefresh_Click;
 
-        StyleSecondaryButton(btnSenderPause, "Pause 24h", clWarn, new Point(0, 0));
+        StyleSecondaryButton(btnSenderPause, "Tạm dừng 24h", clWarn, new Point(0, 0));
         btnSenderPause.Margin = new Padding(0, 0, 6, 4);
         btnSenderPause.Click += btnSenderPause_Click;
 
-        StyleSecondaryButton(btnSenderResume, "Resume", clSuccess, new Point(0, 0));
+        StyleSecondaryButton(btnSenderResume, "Tiếp tục", clSuccess, new Point(0, 0));
         btnSenderResume.Margin = new Padding(0, 0, 6, 4);
         btnSenderResume.Click += btnSenderResume_Click;
 
@@ -446,12 +447,12 @@ partial class Form1
         btnRecipRefresh.Margin = new Padding(0, 0, 6, 4);
         btnRecipRefresh.Click += btnRecipRefresh_Click;
 
-        StyleSecondaryButton(btnRecipMarkUnsub, "Unsub", clDanger, new Point(0, 0));
+        StyleSecondaryButton(btnRecipMarkUnsub, "Ngừng nhận", clDanger, new Point(0, 0));
         btnRecipMarkUnsub.Size = new Size(120, 32);
         btnRecipMarkUnsub.Margin = new Padding(0, 0, 6, 4);
         btnRecipMarkUnsub.Click += btnRecipMarkUnsub_Click;
 
-        StyleSecondaryButton(btnRecipReset, "Reset", clSuccess, new Point(0, 0));
+        StyleSecondaryButton(btnRecipReset, "Đặt lại Ready", clSuccess, new Point(0, 0));
         btnRecipReset.Size = new Size(100, 32);
         btnRecipReset.Margin = new Padding(0, 0, 6, 4);
         btnRecipReset.Click += btnRecipReset_Click;
@@ -631,14 +632,14 @@ partial class Form1
 
         lblStart.Location = new Point(20, 30);
         lblStart.Size = new Size(100, 22);
-        lblStart.Text = "Start UTC h:";
+        lblStart.Text = "Giờ bắt đầu UTC:";
 
         txtStartHour.Location = new Point(120, 28);
         txtStartHour.Size = new Size(60, 24);
 
         lblEnd.Location = new Point(200, 30);
         lblEnd.Size = new Size(100, 22);
-        lblEnd.Text = "End UTC h:";
+        lblEnd.Text = "Giờ kết thúc UTC:";
 
         txtEndHour.Location = new Point(300, 28);
         txtEndHour.Size = new Size(60, 24);
@@ -667,8 +668,12 @@ partial class Form1
         chkDryRun.Text = "DryRun (không gửi SMTP thật, chỉ ghi log)";
 
         StylePrimaryButton(btnSaveConfig, "Lưu cấu hình", clAccent, new Point(20, 216));
-        btnSaveConfig.Size = new Size(180, 36);
+        btnSaveConfig.Size = new Size(190, 36);
         btnSaveConfig.Click += btnSaveConfig_Click;
+
+        StyleSecondaryButton(btnPreflightSend, "Kiểm tra sẵn sàng gửi", clAccent, new Point(220, 216));
+        btnPreflightSend.Size = new Size(230, 36);
+        btnPreflightSend.Click += btnPreflightSend_Click;
 
         lblScheduleHint.Location = new Point(20, 262);
         lblScheduleHint.Size = new Size(1000, 120);
@@ -688,6 +693,7 @@ partial class Form1
         grpSchedule.Controls.Add(clbSendOnUtcDays);
         grpSchedule.Controls.Add(chkDryRun);
         grpSchedule.Controls.Add(btnSaveConfig);
+        grpSchedule.Controls.Add(btnPreflightSend);
         grpSchedule.Controls.Add(lblScheduleHint);
 
         tabSchedule.Controls.Add(grpSchedule);
@@ -697,7 +703,7 @@ partial class Form1
         tabService.BackColor = clBg;
         tabService.Padding = new Padding(12);
 
-        grpServiceActions.Text = "Windows Service (Install/Start/Stop cần quyền Administrator)";
+        grpServiceActions.Text = "Windows Service (Cài/Gỡ/Bật/Tắt cần quyền Administrator)";
         grpServiceActions.Font = new Font("Segoe UI Semibold", 9.5F);
         grpServiceActions.ForeColor = clText;
         grpServiceActions.BackColor = clCard;
@@ -725,22 +731,22 @@ partial class Form1
         flpServiceButtons.Dock = DockStyle.Fill;
         flpServiceButtons.MinimumSize = new Size(100, 44);
 
-        StylePrimaryButton(btnInstallService, "Install", clAccent, new Point(0, 0));
+        StylePrimaryButton(btnInstallService, "Cài service", clAccent, new Point(0, 0));
         btnInstallService.Size = new Size(150, 38);
         btnInstallService.Margin = new Padding(0, 0, 8, 6);
         btnInstallService.Click += btnInstallService_Click;
 
-        StyleSecondaryButton(btnUninstallService, "Uninstall", clDanger, new Point(0, 0));
+        StyleSecondaryButton(btnUninstallService, "Gỡ service", clDanger, new Point(0, 0));
         btnUninstallService.Size = new Size(150, 38);
         btnUninstallService.Margin = new Padding(0, 0, 8, 6);
         btnUninstallService.Click += btnUninstallService_Click;
 
-        StylePrimaryButton(btnStartService, "Start", clSuccess, new Point(0, 0));
+        StylePrimaryButton(btnStartService, "Bật service", clSuccess, new Point(0, 0));
         btnStartService.Size = new Size(150, 38);
         btnStartService.Margin = new Padding(0, 0, 8, 6);
         btnStartService.Click += btnStartService_Click;
 
-        StyleSecondaryButton(btnStopService, "Stop", clWarn, new Point(0, 0));
+        StyleSecondaryButton(btnStopService, "Tắt service", clWarn, new Point(0, 0));
         btnStopService.Size = new Size(150, 38);
         btnStopService.Margin = new Padding(0, 0, 8, 6);
         btnStopService.Click += btnStopService_Click;
@@ -1052,6 +1058,7 @@ partial class Form1
     private CheckedListBox clbSendOnUtcDays;
     private CheckBox chkDryRun;
     private Button btnSaveConfig;
+    private Button btnPreflightSend;
     private Label lblScheduleHint;
 
     // ===== Service =====

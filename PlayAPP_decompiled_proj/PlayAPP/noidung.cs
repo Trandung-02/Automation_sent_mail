@@ -1,6 +1,6 @@
 namespace PlayAPP;
 
-public class noidung
+public class NoiDung
 {
 	public string tieude { get; set; }
 

@@ -7,5 +7,6 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\..\images\mail.ico</ApplicationIcon>
   </PropertyGroup>
 </Project>

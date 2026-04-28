@@ -499,9 +499,9 @@ public sealed class Worker(ILogger<Worker> logger) : BackgroundService
             return _options.Content.TextTemplate;
         }
 
-        var rawBody = row.RawBody ?? "";
-        var rawLine = row.RawLine ?? "";
-        var rawFooter = row.RawFooter ?? "";
+        var rawBody = (row.RawBody ?? "").Trim();
+        var rawLine = (row.RawLine ?? "").Trim();
+        var rawFooter = (row.RawFooter ?? "").Trim();
 
         // Luôn ghép đủ 3 cột theo thứ tự: rawBody -> rawLine -> rawFooter.
         // Mỗi phần cách nhau đúng 2 lần xuống dòng.
@@ -510,7 +510,10 @@ public sealed class Worker(ILogger<Worker> logger) : BackgroundService
             return _options.Content.TextTemplate;
         }
 
-        return rawBody + "\n\n" + rawLine + "\n\n" + rawFooter;
+        var parts = new[] { rawBody, rawLine, rawFooter }
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToArray();
+        return string.Join("\n\n", parts);
     }
 
     private static string GetCsv(string[] c, int idx) => idx < c.Length ? c[idx] : "";

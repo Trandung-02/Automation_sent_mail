@@ -10,6 +10,7 @@ namespace MailSender.Manager;
 public partial class Form1 : Form
 {
     private const string ServiceName = "MailSenderService";
+    private const string HeaderSubtitleDefault = "Quản trị hàng đợi & tài khoản gửi mail (Windows Service)";
 
     private string _rootDir = "";
     private string _mailSenderDir = "";
@@ -38,6 +39,8 @@ public partial class Form1 : Form
     /// <summary>SenderQuota từ appsettings (Min/Max/Warmup) — dùng hiển thị trần quota.</summary>
     private SenderQuotaSnapshot _quotaSnap = new();
     private bool _isElevated;
+    private ToolTip? _uxToolTip;
+    private DateTime _lastInlineFeedbackUtc = DateTime.MinValue;
 
     public Form1()
     {
@@ -62,6 +65,7 @@ public partial class Form1 : Form
         LoadConfigUi();
         LoadTemplatesIntoUi();
         RefreshAll();
+        InitializeUxExperience();
     }
 
     private void Form1_Shown(object? sender, EventArgs e)
@@ -162,6 +166,7 @@ public partial class Form1 : Form
     {
         RefreshAll();
         AppendLog("Đã làm mới toàn bộ.");
+        ShowInlineFeedback("Đã làm mới dữ liệu thành công.", isError: false);
     }
 
     // ===== Path resolution =====
@@ -499,6 +504,7 @@ public partial class Form1 : Form
         ReadConfigSnapshot();
         RefreshSenders();
         AppendLog("Đã làm mới tab Người gửi.");
+        ShowInlineFeedback("Đã cập nhật danh sách người gửi.", isError: false);
     }
 
     private void btnSenderPause_Click(object? sender, EventArgs e)
@@ -509,6 +515,12 @@ public partial class Form1 : Form
             if (emails.Count == 0)
             {
                 MessageBox.Show("Chưa chọn sender nào.");
+                return;
+            }
+
+            if (!ConfirmAction($"Tạm dừng {emails.Count} người gửi trong 24 giờ?", "Xác nhận tạm dừng người gửi"))
+            {
+                AppendLog("Đã hủy thao tác tạm dừng người gửi.");
                 return;
             }
 
@@ -531,10 +543,12 @@ public partial class Form1 : Form
             AppendLog($"Pause {emails.Count} sender đến {until:yyyy-MM-dd HH:mm} UTC.");
             RefreshSenders();
             RefreshHeaderBadge();
+            ShowInlineFeedback($"Đã tạm dừng {emails.Count} người gửi trong 24 giờ.", isError: false);
         }
         catch (Exception ex)
         {
             AppendLog("Lỗi pause sender: " + ex.Message);
+            ShowInlineFeedback("Tạm dừng người gửi thất bại. Kiểm tra log để biết chi tiết.", isError: true);
         }
     }
 
@@ -546,6 +560,12 @@ public partial class Form1 : Form
             if (emails.Count == 0)
             {
                 MessageBox.Show("Chưa chọn sender nào.");
+                return;
+            }
+
+            if (!ConfirmAction($"Tiếp tục {emails.Count} người gửi đã chọn?", "Xác nhận tiếp tục người gửi"))
+            {
+                AppendLog("Đã hủy thao tác tiếp tục người gửi.");
                 return;
             }
 
@@ -565,10 +585,12 @@ public partial class Form1 : Form
             SaveHealthMap(map);
             AppendLog($"Resume {emails.Count} sender.");
             RefreshSenders();
+            ShowInlineFeedback($"Đã tiếp tục {emails.Count} người gửi.", isError: false);
         }
         catch (Exception ex)
         {
             AppendLog("Lỗi resume sender: " + ex.Message);
+            ShowInlineFeedback("Tiếp tục người gửi thất bại. Kiểm tra log để biết chi tiết.", isError: true);
         }
     }
 
@@ -762,6 +784,18 @@ public partial class Form1 : Form
                 return;
             }
 
+            var actionLabel = newStatus switch
+            {
+                "unsubscribed" => "Danh dau Unsubscribed",
+                "ready" => "Đặt lại trạng thái ready",
+                _ => "Cap nhat trang thai"
+            };
+            if (!ConfirmAction($"{actionLabel} cho {emails.Count} người nhận đã chọn?", "Xác nhận cập nhật người nhận"))
+            {
+                AppendLog("Đã hủy thao tác cập nhật người nhận.");
+                return;
+            }
+
             var updated = 0;
             foreach (var r in _recipientCache)
             {
@@ -783,10 +817,12 @@ public partial class Form1 : Form
             AppendLog($"Đã cập nhật {updated} recipient → {newStatus}.");
             ApplyRecipientFilter();
             RefreshDashboard();
+            ShowInlineFeedback($"Đã cập nhật {updated} người nhận sang trạng thái {newStatus}.", isError: false);
         }
         catch (Exception ex)
         {
             AppendLog("Lỗi cập nhật recipients: " + ex.Message);
+            ShowInlineFeedback("Cập nhật người nhận thất bại. Kiểm tra log.", isError: true);
         }
     }
 
@@ -1106,10 +1142,12 @@ public partial class Form1 : Form
             AppendLog("Cấu hình sẽ được service tải lại trong vòng lặp tiếp theo.");
             ReadConfigSnapshot();
             RefreshDashboard();
+            ShowInlineFeedback("Đã lưu cấu hình lịch gửi thành công.", isError: false);
         }
         catch (Exception ex)
         {
             AppendLog("Lỗi save config: " + ex.Message);
+            ShowInlineFeedback("Lưu cấu hình thất bại. Kiểm tra log.", isError: true);
         }
     }
 
@@ -1146,10 +1184,12 @@ public partial class Form1 : Form
             RunProcess("sc.exe", $"start {ServiceName}");
             AppendLog("Service đang chạy.");
             RefreshAll();
+            ShowInlineFeedback("Service đã được khởi động.", isError: false);
         }
         catch (Exception ex)
         {
             AppendLog("Start service lỗi: " + ex.Message);
+            ShowInlineFeedback("Không thể khởi động service.", isError: true);
         }
     }
 
@@ -1165,10 +1205,12 @@ public partial class Form1 : Form
             RunProcess("sc.exe", $"stop {ServiceName}");
             AppendLog("Service đã dừng.");
             RefreshAll();
+            ShowInlineFeedback("Service đã được dừng.", isError: false);
         }
         catch (Exception ex)
         {
             AppendLog("Stop service lỗi: " + ex.Message);
+            ShowInlineFeedback("Không thể dừng service.", isError: true);
         }
     }
 
@@ -1179,6 +1221,12 @@ public partial class Form1 : Form
             return;
         }
 
+        if (!ConfirmAction("Cài service sẽ publish lại và cập nhật MailSenderService. Tiếp tục?", "Xác nhận cài service"))
+        {
+            AppendLog("Đã hủy thao tác cài service.");
+            return;
+        }
+
         try
         {
             UseCursor(Cursors.WaitCursor, () =>
@@ -1186,11 +1234,13 @@ public partial class Form1 : Form
                 InstallServiceInternal();
                 AppendLog("Install service xong.");
                 RefreshAll();
+                ShowInlineFeedback("Đã cài service thành công.", isError: false);
             });
         }
         catch (Exception ex)
         {
             AppendLog("Install service lỗi: " + ex.Message);
+            ShowInlineFeedback("Cài service thất bại.", isError: true);
         }
     }
 
@@ -1198,6 +1248,12 @@ public partial class Form1 : Form
     {
         if (!EnsureElevatedForServiceAction())
         {
+            return;
+        }
+
+        if (!ConfirmAction("Gỡ cài đặt sẽ xóa MailSenderService trên máy này. Bạn chắc chắn?", "Xác nhận gỡ service"))
+        {
+            AppendLog("Đã hủy thao tác gỡ service.");
             return;
         }
 
@@ -1213,11 +1269,97 @@ public partial class Form1 : Form
             RunProcess("powershell", $"-ExecutionPolicy Bypass -File \"{script}\"");
             AppendLog("Uninstall service xong.");
             RefreshAll();
+            ShowInlineFeedback("Đã gỡ service thành công.", isError: false);
         }
         catch (Exception ex)
         {
             AppendLog("Uninstall service lỗi: " + ex.Message);
+            ShowInlineFeedback("Gỡ service thất bại.", isError: true);
         }
+    }
+
+    private void btnPreflightSend_Click(object? sender, EventArgs e)
+    {
+        var issues = new List<string>();
+        var warnings = new List<string>();
+        var senderCount = LoadAppPasswords().Count;
+        if (senderCount == 0)
+        {
+            issues.Add("- Chưa có người gửi trong app_passwords.log.");
+        }
+        else if (int.TryParse(txtSenderThreads.Text.Trim(), out var senderThreads) && senderThreads > senderCount)
+        {
+            issues.Add($"- Số lượng người gửi ({senderCount}) nhỏ hơn số luồng đang chạy ({senderThreads}).");
+        }
+
+        var recipients = LoadAllRecipients();
+        var readyCount = recipients.Count(r => r.Status.Equals("ready", StringComparison.OrdinalIgnoreCase));
+        if (readyCount == 0)
+        {
+            issues.Add("- Không có người nhận ở trạng thái ready.");
+        }
+
+        var hasTemplateName = !string.IsNullOrWhiteSpace(txtTplName.Text);
+        if (!hasTemplateName)
+        {
+            issues.Add("- sender_display_name.txt đang trống.");
+        }
+
+        if (!TryValidateTemplatesCsv(txtTplBodies.Text, out var tplError))
+        {
+            issues.Add("- mail_templates.csv chưa hợp lệ: " + tplError);
+        }
+
+        ReadConfigSnapshot();
+        var nowUtc = DateTime.UtcNow;
+        var inWindow = IsInsideWindow(nowUtc, _scheduleSnap);
+        if (!inWindow)
+        {
+            var nextOpen = ComputeNextWindowOpen(nowUtc, _scheduleSnap);
+            warnings.Add($"- Ngoài cửa sổ gửi. Mở lại lúc {nextOpen:yyyy-MM-dd HH:mm} UTC.");
+        }
+
+        if (chkDryRun.Checked)
+        {
+            warnings.Add("- DryRun đang bật: service chỉ ghi log, không gửi SMTP thật.");
+        }
+
+        var status = GetServiceStatusText();
+        if (status != "Running")
+        {
+            issues.Add($"- Service chưa ở trạng thái Running (hiện tại: {status}).");
+        }
+
+        if (issues.Count == 0 && warnings.Count == 0)
+        {
+            var msgOk = $"Sẵn sàng gửi email.{Environment.NewLine}- Người gửi: {senderCount}{Environment.NewLine}- Người nhận ready: {readyCount}{Environment.NewLine}- Service: Running";
+            MessageBox.Show(msgOk, "Kiểm tra sẵn sàng gửi", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            AppendLog("Preflight OK: hệ thống sẵn sàng gửi.");
+            ShowInlineFeedback("Hệ thống sẵn sàng gửi email.", isError: false);
+            return;
+        }
+
+        if (issues.Count == 0)
+        {
+            var msgWarn =
+                "Hệ thống có thể gửi, nhưng nên xem các cảnh báo sau:" + Environment.NewLine +
+                string.Join(Environment.NewLine, warnings) + Environment.NewLine + Environment.NewLine +
+                "Nếu tiếp tục, service vẫn chạy theo cấu hình hiện tại.";
+            MessageBox.Show(msgWarn, "Preflight cảnh báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            AppendLog("Preflight warning: " + warnings.Count + " cảnh báo.");
+            ShowInlineFeedback("Cảnh báo: preflight có cảnh báo, nên kiểm tra trước khi gửi.", isError: false);
+            return;
+        }
+
+        var allProblems = new List<string>();
+        allProblems.AddRange(issues);
+        allProblems.AddRange(warnings);
+        var msg =
+            "Cần xử lý các mục sau trước khi gửi:" + Environment.NewLine +
+            string.Join(Environment.NewLine, allProblems);
+        MessageBox.Show(msg, "Preflight chưa đạt", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        AppendLog("Preflight cần xử lý: " + issues.Count + " lỗi, " + warnings.Count + " cảnh báo.");
+        ShowInlineFeedback("Preflight chưa đạt. Xem các mục cần xử lý.", isError: true);
     }
 
     private void TryStopServiceBeforePublish()
@@ -1774,6 +1916,92 @@ public partial class Form1 : Form
         AppendLog("Đang chạy không quyền Administrator: tab Service chỉ ở chế độ xem.");
     }
 
+    private void InitializeUxExperience()
+    {
+        tabMain.ShowToolTips = true;
+        tabDashboard.ToolTipText = "Theo dõi tổng quan trạng thái gửi, cửa sổ gửi và hoạt động gần đây.";
+        tabSenders.ToolTipText = "Quản lý người gửi: tạm dừng, tiếp tục, xem báo cáo và kiểm tra app password.";
+        tabRecipients.ToolTipText = "Lọc danh sách người nhận, cập nhật nhanh trạng thái unsub/ready.";
+        tabTemplates.ToolTipText = "Chỉnh tên người gửi và mẫu nội dung email.";
+        tabSchedule.ToolTipText = "Thiết lập cửa sổ gửi UTC, ngày gửi và kiểm tra sẵn sàng gửi.";
+        tabService.ToolTipText = "Quản lý dịch vụ MailSender Service trên Windows.";
+
+        _uxToolTip?.Dispose();
+        _uxToolTip = new ToolTip
+        {
+            AutoPopDelay = 12000,
+            InitialDelay = 250,
+            ReshowDelay = 120,
+            ShowAlways = true
+        };
+        _uxToolTip.SetToolTip(btnGlobalRefresh, "Làm mới toàn bộ dashboard, người gửi, người nhận và service.");
+        _uxToolTip.SetToolTip(chkAutoRefresh, "Tự động cập nhật dữ liệu mới mỗi 15 giây.");
+        _uxToolTip.SetToolTip(btnSenderPause, "Tạm dừng người gửi đã chọn trong 24 giờ để tránh lỗi lặp lại.");
+        _uxToolTip.SetToolTip(btnSenderResume, "Bỏ tạm dừng để người gửi quay lại trạng thái Active.");
+        _uxToolTip.SetToolTip(btnSenderViewReport, "Xem kết quả gửi hôm nay theo người gửi đang chọn.");
+        _uxToolTip.SetToolTip(cmbRecipFilter, "Lọc nhanh người nhận theo trạng thái.");
+        _uxToolTip.SetToolTip(txtRecipSearch, "Tìm theo email hoặc tên trang.");
+        _uxToolTip.SetToolTip(btnRecipMarkUnsub, "Đánh dấu người nhận đã chọn là unsubscribed.");
+        _uxToolTip.SetToolTip(btnRecipReset, "Đưa người nhận đã chọn về trạng thái ready để gửi lại.");
+        _uxToolTip.SetToolTip(btnSaveConfig, "Lưu lịch gửi UTC và số lượng luồng người gửi.");
+        _uxToolTip.SetToolTip(btnPreflightSend, "Kiểm tra nhanh người gửi/người nhận/template/service trước khi gửi.");
+        _uxToolTip.SetToolTip(txtTplName, "Tên hiển thị người gửi. Dòng đầu tiên hợp lệ sẽ được sử dụng.");
+        _uxToolTip.SetToolTip(txtTplBodies, "CSV mẫu mail: bắt buộc header rawSubject,rawBody,rawLine,rawFooter.");
+        _uxToolTip.SetToolTip(txtTplSubjects, "Thông tin hướng dẫn về định dạng template và biến hỗ trợ.");
+        _uxToolTip.SetToolTip(btnTplBodiesSave, "Kiểm tra định dạng CSV rồi mới lưu.");
+        _uxToolTip.SetToolTip(btnTplNameSave, "Lưu tên hiển thị người gửi.");
+        _uxToolTip.SetToolTip(btnInstallService, "Publish và cài đặt MailSenderService (cần quyền Admin).");
+        _uxToolTip.SetToolTip(btnStartService, "Khởi động service để bắt đầu gửi theo lịch.");
+        _uxToolTip.SetToolTip(btnStopService, "Dừng service an toàn để cập nhật cấu hình hoặc bảo trì.");
+    }
+
+    private void ShowInlineFeedback(string message, bool isError)
+    {
+        if (lblHeaderSubtitle == null || lblHeaderSubtitle.IsDisposed)
+        {
+            return;
+        }
+
+        var isWarning = !isError && message.StartsWith("Cảnh báo:", StringComparison.OrdinalIgnoreCase);
+        _lastInlineFeedbackUtc = DateTime.UtcNow;
+        lblHeaderSubtitle.ForeColor = isError
+            ? Color.FromArgb(252, 165, 165)
+            : (isWarning ? Color.FromArgb(252, 211, 77) : Color.FromArgb(134, 239, 172));
+        lblHeaderSubtitle.Text = (isError ? "[Lỗi] " : (isWarning ? "[Cảnh báo] " : "[OK] ")) + message;
+
+        var stamp = _lastInlineFeedbackUtc;
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(4500).ConfigureAwait(false);
+            if (_lastInlineFeedbackUtc != stamp)
+            {
+                return;
+            }
+
+            try
+            {
+                if (!IsHandleCreated || IsDisposed)
+                {
+                    return;
+                }
+
+                BeginInvoke(new Action(() =>
+                {
+                    if (lblHeaderSubtitle.IsDisposed)
+                    {
+                        return;
+                    }
+                    lblHeaderSubtitle.ForeColor = Color.FromArgb(209, 213, 219);
+                    lblHeaderSubtitle.Text = HeaderSubtitleDefault;
+                }));
+            }
+            catch
+            {
+                // ignore UI dispose race
+            }
+        });
+    }
+
     private bool EnsureElevatedForServiceAction()
     {
         if (_isElevated)
@@ -1788,6 +2016,16 @@ public partial class Form1 : Form
             MessageBoxButtons.OK,
             MessageBoxIcon.Information);
         return false;
+    }
+
+    private static bool ConfirmAction(string message, string title)
+    {
+        return MessageBox.Show(
+            message,
+            title,
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question,
+            MessageBoxDefaultButton.Button2) == DialogResult.Yes;
     }
 
     private static bool IsRunningAsAdministrator()

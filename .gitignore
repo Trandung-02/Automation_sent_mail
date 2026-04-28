@@ -11,6 +11,7 @@ Data/login_success.log
 Data/dead_recaptcha_verify.log
 Data/dead_google_restrictions.log
 Data/*.log
+Data/ChromeProfiles/
 Data/screenshots/
 
 # Cookie / checkpoint / datafile runtime

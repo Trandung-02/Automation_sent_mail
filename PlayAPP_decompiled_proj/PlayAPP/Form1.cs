@@ -37,9 +37,7 @@ public partial class Form1 : Form
 
 	private static readonly int[] AllowedLuongValues = new int[3] { 2, 5, 10 };
 
-	private int BrowserCount = 1;
-
-	private List<noidung> _noidung = new List<noidung>();
+	private List<NoiDung> _noidung = new List<NoiDung>();
 
 	/// <summary>Hàng bắt đầu hàng đợi chạy (0-based) khi không chọn nhiều dòng; cập nhật khi click/chọn một dòng trên lưới.</summary>
 	private int _runQueueStartRowIndex;
@@ -56,15 +54,9 @@ public partial class Form1 : Form
 
 	private ToolTip _uiToolTip;
 
-	private int _totalLoaded = 0;
-
-	private int added = 0;
-
 	private readonly object _lockCount = new object();
 
 	private static readonly Random _rand = new Random();
-
-	private int m_Rowindex = 0;
 
 	private static HttpClient CreateSharedHttpClient()
 	{
@@ -5306,7 +5298,7 @@ public partial class Form1 : Form
 					MessageBox.Show("Không có nội dung (Data: tieude.txt, noidung.txt, codesc.txt…).");
 					return false;
 				}
-				noidung nd = _noidung[0];
+				NoiDung nd = _noidung[0];
 				string formLink = "";
 				if (wantTaoForm)
 				{
@@ -5757,7 +5749,7 @@ public partial class Form1 : Form
 												await fallbackInput.ClickAsync(new LocatorClickOptions { Force = true, Timeout = 6000f });
 												await fallbackInput.PressAsync("Control+A");
 												await fallbackInput.PressAsync("Delete");
-												await fallbackInput.TypeAsync("086EF4", new LocatorTypeOptions { Delay = 40f });
+												await fallbackInput.FillAsync("086EF4");
 												await fallbackInput.PressAsync("Tab");
 												hexSet = true;
 											}
@@ -7721,7 +7713,7 @@ public partial class Form1 : Form
 				{
 					continue;
 				}
-				_noidung.Add(new noidung
+				_noidung.Add(new NoiDung
 				{
 					tieude = tieude,
 					noidungchinh = noidungchinh,
